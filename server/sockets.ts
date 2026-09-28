@@ -1,21 +1,22 @@
 import type { Server as SocketServer } from "socket.io";
-import type { Game, GameEvent, ServerState, Submission } from "../shared/types";
-import { submitAndAdvance } from "./gameplay";
+import type { Farm, FarmAction, ServerState } from "../shared/types";
+import { applyFarmAction } from "./farm";
 import {
-	createGame,
-	deleteGame,
-	joinGame,
-	leaveGame,
-	playerInGame,
-	summarizeGames,
-} from "./games";
+	farmByOwner,
+	getOrCreateFarm,
+	leaveFarm,
+	summarizeFarms,
+	visitFarm,
+} from "./farms";
 import { getOrCreatePlayer } from "./players";
 
 interface SocketData {
 	username?: string;
-	gameId?: string;
-	role?: "player" | "observer";
+	/** Owner of the farm this socket is currently viewing, if any. */
+	farmOwner?: string;
 }
+
+const room = (owner: string): string => `farm:${owner}`;
 
 export function registerSocketHandlers(
 	io: SocketServer,
@@ -25,13 +26,12 @@ export function registerSocketHandlers(
 		io.emit("players", { players: state.players });
 	}
 
-	function broadcastGames(): void {
-		io.emit("games", { games: summarizeGames(state) });
+	function broadcastFarms(): void {
+		io.emit("farms", { farms: summarizeFarms(state) });
 	}
 
-	function broadcastGame(game: Game, events: GameEvent[] = []): void {
-		if (!state.games[game.id]) return;
-		io.to(game.id).emit("gameUpdate", { game, events });
+	function broadcastFarm(farm: Farm): void {
+		io.to(room(farm.owner)).emit("farmUpdate", { farm });
 	}
 
 	function loggedInName(socket: { data: SocketData }): string | null {
@@ -51,165 +51,101 @@ export function registerSocketHandlers(
 			}
 
 			const player = getOrCreatePlayer(state, name);
+			const farm = getOrCreateFarm(state, name);
 			data.username = name;
 
-			cb?.({ ok: true, player });
+			cb?.({ ok: true, player, farm });
 			broadcastPlayers();
-			socket.emit("games", { games: summarizeGames(state) });
-
-			// Re-establish room membership if this player is already in a game.
-			const gameId = playerInGame(state, name);
-			if (gameId) {
-				data.gameId = gameId;
-				data.role = state.games[gameId].players.some((p) => p.name === name)
-					? "player"
-					: "observer";
-				socket.join(gameId);
-				broadcastGame(state.games[gameId]);
-			}
+			broadcastFarms();
 		});
 
-		socket.on("games", (cb?: (res: unknown) => void) => {
-			cb?.({ games: summarizeGames(state) });
+		socket.on("farms", (cb?: (res: unknown) => void) => {
+			cb?.({ farms: summarizeFarms(state) });
 		});
 
-		socket.on("createGame", (cb?: (res: unknown) => void) => {
+		socket.on("visitFarm", (payload: unknown, cb?: (res: unknown) => void) => {
 			const name = loggedInName(socket);
 			if (!name) {
 				cb?.({ ok: false, error: "not logged in" });
 				return;
 			}
-			const game = createGame(state, name);
-			if (!game) {
-				cb?.({ ok: false, error: "already in a game or not registered" });
-				return;
-			}
-			data.gameId = game.id;
-			data.role = "player";
-			socket.join(game.id);
-			cb?.({ ok: true, game });
-			broadcastGames();
-			broadcastGame(game);
-		});
-
-		socket.on("joinGame", (payload: unknown, cb?: (res: unknown) => void) => {
-			const name = loggedInName(socket);
-			if (!name) {
-				cb?.({ ok: false, error: "not logged in" });
-				return;
-			}
-			const gameId = String((payload as { gameId?: unknown })?.gameId ?? "");
-			const res = joinGame(state, gameId, name);
+			const owner = String((payload as { owner?: unknown })?.owner ?? "");
+			const res = visitFarm(state, owner, name);
 			if ("error" in res) {
 				cb?.({ ok: false, error: res.error });
 				return;
 			}
-			const { game, role } = res;
-			if (data.gameId && data.gameId !== game.id) socket.leave(data.gameId);
-			data.gameId = game.id;
-			data.role = role;
-			socket.join(game.id);
-			cb?.({ ok: true, game, role });
-			broadcastGames();
-			broadcastGame(game);
+			if (data.farmOwner && data.farmOwner !== owner) {
+				socket.leave(room(data.farmOwner));
+			}
+			data.farmOwner = owner;
+			socket.join(room(owner));
+			cb?.({ ok: true, farm: res.farm });
+			broadcastFarms();
+			broadcastFarm(res.farm);
 		});
 
-		socket.on("leaveGame", (cb?: (res: unknown) => void) => {
+		socket.on("leaveFarm", (cb?: (res: unknown) => void) => {
 			const name = loggedInName(socket);
 			if (!name) {
 				cb?.({ ok: false, error: "not logged in" });
 				return;
 			}
-			const game = leaveGame(state, name);
-			if (!game) {
+			const owner = data.farmOwner;
+			if (!owner) {
 				cb?.({ ok: true, removed: false });
 				return;
 			}
-			broadcastGames();
-			broadcastGame(game);
-			if (data.gameId === game.id) {
-				data.gameId = undefined;
-				data.role = undefined;
-			}
-			socket.leave(game.id);
-			cb?.({ ok: true, removed: true, game });
+			const farm = leaveFarm(state, owner, name);
+			socket.leave(room(owner));
+			data.farmOwner = undefined;
+			cb?.({ ok: true, removed: true });
+			broadcastFarms();
+			if (farm) broadcastFarm(farm);
 		});
 
-		socket.on("deleteGame", (payload: unknown, cb?: (res: unknown) => void) => {
+		socket.on("farmAction", (payload: unknown, cb?: (res: unknown) => void) => {
 			const name = loggedInName(socket);
 			if (!name) {
 				cb?.({ ok: false, error: "not logged in" });
 				return;
 			}
-			const gameId = String(
-				(payload as { gameId?: unknown } | undefined)?.gameId ?? "",
-			);
-			const game = deleteGame(state, gameId, name);
-			if (!game) {
-				cb?.({ ok: false, error: "not a player or game not found" });
+			const owner = String((payload as { owner?: unknown })?.owner ?? "");
+			const action = (payload as { action?: FarmAction })?.action;
+			if (!action) {
+				cb?.({ ok: false, error: "missing action" });
 				return;
 			}
-
-			// Tell everyone in the room the game is gone, then clean up.
-			io.to(gameId).emit("gameDeleted", { gameId });
-			for (const s of io.sockets.sockets.values()) {
-				const d = s.data as SocketData;
-				if (d.gameId === gameId) {
-					d.gameId = undefined;
-					d.role = undefined;
-					s.leave(gameId);
-				}
-			}
-			cb?.({ ok: true, removed: true, game });
-			broadcastGames();
-		});
-
-		socket.on("submit", (payload: unknown, cb?: (res: unknown) => void) => {
-			const name = loggedInName(socket);
-			if (!name) {
-				cb?.({ ok: false, error: "not logged in" });
+			if (owner !== name) {
+				cb?.({ ok: false, error: "not your farm" });
 				return;
 			}
-			const gameId = data.gameId;
-			if (!gameId) {
-				cb?.({ ok: false, error: "not in a game" });
+			const farm = farmByOwner(state, owner);
+			if (!farm) {
+				cb?.({ ok: false, error: "farm not found" });
 				return;
 			}
-			const game = state.games[gameId];
-			if (!game) {
-				cb?.({ ok: false, error: "game not found" });
+			const result = applyFarmAction(farm, action);
+			if (!result.ok) {
+				cb?.({ ok: false, error: result.error });
 				return;
 			}
-			if (!game.players.some((p) => p.name === name)) {
-				cb?.({ ok: false, error: "not a player" });
-				return;
-			}
-			const choice = (payload as { choice?: Submission })?.choice;
-			if (!choice) {
-				cb?.({ ok: false, error: "missing choice" });
-				return;
-			}
-			const res = submitAndAdvance(game, name, choice);
-			if (!res.ok) {
-				cb?.({ ok: false, error: res.error });
-				return;
-			}
-			cb?.({ ok: true, status: res.status });
-			broadcastGame(game, res.events);
+			cb?.({ ok: true });
+			broadcastFarms();
+			broadcastFarm(farm);
 		});
 
 		socket.on("disconnect", () => {
 			const name = data.username;
-			if (name && data.role === "observer" && data.gameId) {
-				const gameId = data.gameId;
-				leaveGame(state, name);
-				broadcastGames();
-				if (state.games[gameId]) broadcastGame(state.games[gameId]);
+			if (name && data.farmOwner) {
+				const owner = data.farmOwner;
+				leaveFarm(state, owner, name);
+				broadcastFarms();
+				const farm = farmByOwner(state, owner);
+				if (farm) broadcastFarm(farm);
 			}
-			// Players persist across disconnects; only the binding clears.
 			data.username = undefined;
-			data.gameId = undefined;
-			data.role = undefined;
+			data.farmOwner = undefined;
 		});
 	});
 }

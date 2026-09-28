@@ -15,14 +15,14 @@ const io = new Server(server);
 app.get("/api/state", (_req, res) => {
 	res.json({
 		playerCount: state.players.length,
-		gameCount: Object.keys(state.games).length,
+		farmCount: Object.keys(state.farms).length,
 	});
 });
 
 // Test hook: wipe in-memory state so e2e runs start clean.
 app.post("/api/reset", (_req, res) => {
 	state.players = [];
-	state.games = {};
+	state.farms = {};
 	res.json({ ok: true });
 });
 
