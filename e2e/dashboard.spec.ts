@@ -1,67 +1,42 @@
 import { expect, test } from "@playwright/test";
-import {
-	BASE,
-	createGame,
-	login,
-	resetServer,
-	uniqueName,
-	waitForBoard,
-} from "./helpers";
+import { login, resetServer, uniqueName } from "./helpers";
 
-test("Leave works from the dashboard via SPA navigation", async ({ browser }) => {
+test("the lobby lists other farms and the Visit button opens one", async ({
+	browser,
+}) => {
 	await resetServer();
-	const aName = uniqueName("Alice");
-	const bName = uniqueName("Bob");
-
-	const ctxA = await browser.newContext();
-	const alice = await ctxA.newPage();
-	await login(alice, aName);
-	const gameId = await createGame(alice);
+	const aliceName = uniqueName("Alice");
+	const bobName = uniqueName("Bob");
 
 	const ctxB = await browser.newContext();
 	const bob = await ctxB.newPage();
-	await login(bob, bName);
-	await bob.goto(`${BASE}/games/${gameId}`);
-	await waitForBoard(bob);
+	await login(bob, bobName);
 
-	// SPA navigate back to the dashboard (no reload).
-	await bob.getByRole("link", { name: /Back to dashboard/i }).click();
-	await bob.waitForURL("**/dashboard");
+	const ctxA = await browser.newContext();
+	const alice = await ctxA.newPage();
+	await login(alice, aliceName);
 
-	await expect(bob.getByRole("button", { name: /^Leave$/ })).toBeVisible();
-	await bob.getByRole("button", { name: /^Leave$/ }).click();
-
-	// After leaving, the "you are in game" banner disappears.
-	await expect(bob.getByText(/You are in game/i)).toHaveCount(0);
+	await expect(alice.getByText(bobName)).toBeVisible();
+	await alice.getByRole("button", { name: /^Visit$/ }).click();
+	await alice.waitForURL(new RegExp(`/farms/${bobName}$`));
+	await expect(alice.getByText(/read only/i)).toBeVisible();
 
 	await ctxA.close();
 	await ctxB.close();
 });
 
-test("Delete works from the dashboard via SPA navigation", async ({ browser }) => {
+test("the lobby shows the player's own farm and opens its field", async ({
+	browser,
+}) => {
 	await resetServer();
-	const aName = uniqueName("Alice");
-	const bName = uniqueName("Bob");
+	const ctx = await browser.newContext();
+	const page = await ctx.newPage();
+	await login(page, uniqueName("Alice"));
 
-	const ctxA = await browser.newContext();
-	const alice = await ctxA.newPage();
-	await login(alice, aName);
-	const gameId = await createGame(alice);
+	await expect(page.getByRole("button", { name: /Go to field/i })).toBeVisible();
+	await page.getByRole("button", { name: /Go to field/i }).click();
+	await page.waitForURL(/\/farms\/.+/);
+	await expect(page.getByText(/^FIELD$/)).toBeVisible();
 
-	const ctxB = await browser.newContext();
-	const bob = await ctxB.newPage();
-	await login(bob, bName);
-	await bob.goto(`${BASE}/games/${gameId}`);
-	await waitForBoard(bob);
-
-	await bob.getByRole("link", { name: /Back to dashboard/i }).click();
-	await bob.waitForURL("**/dashboard");
-
-	await expect(bob.getByRole("button", { name: /^Delete$/ })).toBeVisible();
-	await bob.getByRole("button", { name: /^Delete$/ }).click();
-
-	await expect(bob.getByText(`#${gameId.slice(0, 8)}`)).toHaveCount(0);
-
-	await ctxA.close();
-	await ctxB.close();
+	await ctx.close();
 });

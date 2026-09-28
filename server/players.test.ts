@@ -3,12 +3,11 @@ import { getOrCreatePlayer } from "./players";
 import { state } from "./state";
 
 describe("getOrCreatePlayer", () => {
-	it("creates a player with a starter and default deck when new", () => {
+	it("creates a player and their farm when new", () => {
 		const player = getOrCreatePlayer(state, "Alice");
 		expect(player.name).toBe("Alice");
-		expect(player.starter.type).toBe("bot");
-		expect(player.deck).toHaveLength(20);
 		expect(state.players).toContain(player);
+		expect(state.farms.Alice.seeds).toBe(4);
 	});
 
 	it("returns the existing player on repeat calls", () => {

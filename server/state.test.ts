@@ -4,6 +4,6 @@ import { state } from "./state";
 describe("state", () => {
 	it("starts empty", () => {
 		expect(state.players).toEqual([]);
-		expect(state.games).toEqual({});
+		expect(state.farms).toEqual({});
 	});
 });

@@ -1,6 +1,6 @@
 import { Route, Routes } from "react-router-dom";
 import Dashboard from "./routes/Dashboard";
-import Game from "./routes/Game";
+import Farm from "./routes/Farm";
 import Login from "./routes/Login";
 
 export default function App() {
@@ -8,7 +8,7 @@ export default function App() {
 		<Routes>
 			<Route path="/" element={<Login />} />
 			<Route path="/dashboard" element={<Dashboard />} />
-			<Route path="/games/:uuid" element={<Game />} />
+			<Route path="/farms/:owner" element={<Farm />} />
 		</Routes>
 	);
 }

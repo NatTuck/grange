@@ -6,5 +6,5 @@ import type { ServerState } from "../shared/types";
  */
 export const state: ServerState = {
 	players: [],
-	games: {},
+	farms: {},
 };
