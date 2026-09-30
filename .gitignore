@@ -4,3 +4,10 @@ dist
 .DS_Store
 test-results
 playwright-report
+
+# Elixir / Mix
+backend/_build
+backend/deps
+backend/priv/static
+backend/*.tar
+backend/.elixir_ls
