@@ -5,7 +5,7 @@ if config_env() == :prod do
     System.get_env("SECRET_KEY_BASE") ||
       raise "environment variable SECRET_KEY_BASE is missing"
 
-  port = String.to_integer(System.get_env("PORT") || "4000")
+  port = String.to_integer(System.get_env("PORT") || "3200")
 
   config :grange, GrangeWeb.Endpoint,
     http: [ip: {0, 0, 0, 0, 0, 0, 0, 0}, port: port],

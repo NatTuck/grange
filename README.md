@@ -11,7 +11,7 @@ Elixir/Phoenix and talks to the SPA exclusively over Phoenix Channels.
 4. Run the dev servers: `pnpm dev`
 
 Then visit <http://localhost:3000/>. In development Vite serves the SPA on 3000
-and proxies `/socket` and `/api` to Phoenix on 4000.
+and proxies `/socket` and `/api` to Phoenix on 3200.
 
 ## Tests
 

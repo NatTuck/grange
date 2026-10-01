@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite'
 
 // In development the Phoenix backend listens here; Vite serves the SPA on 3000
 // and proxies channel/HTTP traffic to it.
-const BACKEND = 'http://localhost:4000'
+const BACKEND = 'http://localhost:3200'
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
