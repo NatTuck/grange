@@ -1,73 +1,90 @@
 defmodule GrangeWeb.FarmChannelTest do
+  @moduledoc false
   use GrangeWeb.ChannelCase
 
-  alias Grange.Store
+  alias Grange.{Accounts, FarmStore}
+  alias GrangeWeb.ChannelCase, as: Helper
 
   setup do
-    Store.reset()
+    Accounts.reset()
+    FarmStore.reset()
     :ok
   end
 
-  defp join_farm(owner, username) do
-    {:ok, reply, socket} =
-      socket(GrangeWeb.UserSocket)
-      |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:#{owner}", %{"username" => username})
-
-    {reply, socket}
+  defp signed_socket(username) do
+    user = Helper.register_user(username)
+    socket(GrangeWeb.UserSocket, user.id, %{user: user})
   end
 
   test "joining a farm replies with the farm" do
-    Store.get_or_create_player("Alice")
-    {reply, _socket} = join_farm("Alice", "Alice")
+    FarmStore.ensure("Alice")
+
+    assert {:ok, reply, _socket} =
+             signed_socket("Alice")
+             |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Alice")
 
     assert reply.farm.owner == "Alice"
-    assert reply.farm.seeds == 4
+    assert reply.farm.tiles == []
   end
 
-  test "an owner can act on their farm" do
-    Store.get_or_create_player("Alice")
-    {_reply, socket} = join_farm("Alice", "Alice")
+  test "the owner can till and the change is broadcast" do
+    FarmStore.ensure("Alice")
 
-    ref = push(socket, "farmAction", %{"owner" => "Alice", "action" => %{"kind" => "plantSeed"}})
+    {:ok, _reply, socket} =
+      signed_socket("Alice") |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Alice")
+
+    ref = push(socket, "farmAction", %{"action" => %{"kind" => "till", "x" => 1, "y" => 1}})
     assert_reply(ref, :ok)
-    assert_broadcast("farmUpdate", %{farm: %{seeds: 3}})
-    assert Store.farm("Alice").seeds == 3
+    assert_broadcast("farmUpdate", %{farm: %{tiles: [%{state: :tilled}]}})
   end
 
   test "an illegal action is rejected" do
-    Store.get_or_create_player("Alice")
-    {_reply, socket} = join_farm("Alice", "Alice")
+    FarmStore.ensure("Alice")
 
-    ref =
-      push(socket, "farmAction", %{"owner" => "Alice", "action" => %{"kind" => "convertTomato"}})
+    {:ok, _reply, socket} =
+      signed_socket("Alice") |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Alice")
 
+    ref = push(socket, "farmAction", %{"action" => %{"kind" => "harvest", "x" => 0, "y" => 0}})
     assert_reply(ref, :error, reply)
-    assert reply.error == "no tomatoes to convert"
+    assert reply.error == "no tilled tile here"
   end
 
-  test "a visitor can join read-only and cannot act" do
-    Store.get_or_create_player("Alice")
-    {_reply, socket} = join_farm("Alice", "Bob")
+  test "a visitor joins read-only and cannot act" do
+    FarmStore.ensure("Alice")
 
-    assert Store.farm("Alice").visitors == ["Bob"]
+    {:ok, _reply, socket} =
+      signed_socket("Bob") |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Alice")
 
-    ref = push(socket, "farmAction", %{"owner" => "Alice", "action" => %{"kind" => "plantSeed"}})
+    ref = push(socket, "farmAction", %{"action" => %{"kind" => "till", "x" => 0, "y" => 0}})
     assert_reply(ref, :error, reply)
     assert reply.error == "not your farm"
   end
 
-  test "joining a missing farm fails" do
-    assert {:error, %{error: "Farm not found"}} =
-             socket(GrangeWeb.UserSocket)
-             |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Nobody", %{"username" => "Bob"})
+  test "a signed-out socket cannot act" do
+    FarmStore.ensure("Alice")
+
+    {:ok, _reply, socket} =
+      socket(GrangeWeb.UserSocket)
+      |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Alice")
+
+    ref = push(socket, "farmAction", %{"action" => %{"kind" => "till", "x" => 0, "y" => 0}})
+    assert_reply(ref, :error, reply)
+    assert reply.error == "not logged in"
   end
 
-  test "leaving removes the visitor" do
-    Store.get_or_create_player("Alice")
-    {_reply, socket} = join_farm("Alice", "Bob")
+  test "joining a missing farm fails" do
+    assert {:error, %{error: "Farm not found"}} =
+             signed_socket("Bob")
+             |> subscribe_and_join(GrangeWeb.FarmChannel, "farm:Nobody")
+  end
 
-    ref = push(socket, "leaveFarm", %{})
-    assert_reply(ref, :ok, reply)
-    assert reply.removed == true
+  test "UserSocket.connect resolves the token param" do
+    user = Helper.register_user("Alice")
+    token = Accounts.create_session(user.id)
+
+    assert {:ok, connected} =
+             GrangeWeb.UserSocket.connect(%{"token" => token}, socket(GrangeWeb.UserSocket), %{})
+
+    assert connected.assigns.user.id == user.id
   end
 end

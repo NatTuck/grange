@@ -3,7 +3,16 @@ defmodule GrangeWeb.Endpoint do
 
   use Phoenix.Endpoint, otp_app: :grange
 
-  # The SPA talks to the server exclusively over this socket.
+  @session_options [
+    store: :cookie,
+    key: "_grange_key",
+    signing_salt: "grange-session",
+    same_site: "Lax",
+    http_only: true
+  ]
+
+  # The SPA talks to the server over this socket. Identity is carried in the
+  # connect params (see `UserSocket`), so no session/cookie connect_info.
   socket("/socket", GrangeWeb.UserSocket,
     websocket: true,
     longpoll: false
@@ -23,5 +32,6 @@ defmodule GrangeWeb.Endpoint do
 
   plug(Plug.MethodOverride)
   plug(Plug.Head)
+  plug(Plug.Session, @session_options)
   plug(GrangeWeb.Router)
 end

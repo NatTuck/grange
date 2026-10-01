@@ -1,31 +1,32 @@
 import { type Channel, Socket } from "phoenix";
-import type { Farm, FarmAction, FarmSummary, Player } from "../shared/types";
+import type { ActiveFarm, FarmAction, FarmSummary, Player } from "../shared/types";
 import { useGameStore } from "./store";
 
+/** Session token used to authenticate the socket handshake. */
+let authToken: string | null = null;
+
+export function setAuthToken(token: string | null): void {
+	authToken = token;
+}
+
 /** Single shared connection for the whole SPA. */
-export const socket = new Socket("/socket", { params: {} });
+export const socket = new Socket("/socket", {
+	params: () => ({ token: authToken }),
+});
 
 export interface Ack {
 	ok: boolean;
 	error?: string;
 }
 
-export interface LoginAck extends Ack {
-	player?: Player;
-	farm?: Farm;
-}
-
 export interface FarmAck extends Ack {
-	farm?: Farm;
-	removed?: boolean;
+	farm?: ActiveFarm;
 }
 
 /** The lobby channel is shared by the whole app; the farm channel tracks visits. */
-let lobbyPromise: Promise<Channel> | null = null;
+let lobby: Channel | null = null;
 let farmChannel: Channel | null = null;
 let farmOwner: string | null = null;
-let currentUsername = "";
-let connected = false;
 
 function reasonOf(payload: unknown): string | undefined {
 	if (payload && typeof payload === "object") {
@@ -37,8 +38,8 @@ function reasonOf(payload: unknown): string | undefined {
 	return undefined;
 }
 
-function joinLobby(): Promise<Channel> {
-	if (lobbyPromise) return lobbyPromise;
+function joinLobby(): Channel {
+	if (lobby) return lobby;
 
 	const channel = socket.channel("lobby", {});
 
@@ -52,86 +53,58 @@ function joinLobby(): Promise<Channel> {
 		useGameStore.getState().setFarms(farms);
 	});
 
-	lobbyPromise = new Promise<Channel>((resolve, reject) => {
-		channel
-			.join()
-			.receive("ok", () => resolve(channel))
-			.receive("error", (payload: unknown) => {
-				lobbyPromise = null;
-				reject(new Error(reasonOf(payload) ?? "could not join lobby"));
-			})
-			.receive("timeout", () => {
-				lobbyPromise = null;
-				reject(new Error("lobby timed out"));
-			});
-	});
+	channel
+		.join()
+		.receive("ok", (payload: unknown) => {
+			const { players, farms } = payload as {
+				players: Player[];
+				farms: FarmSummary[];
+			};
+			useGameStore.getState().setPlayers(players);
+			useGameStore.getState().setFarms(farms);
+		})
+		.receive("error", () => {
+			lobby = null;
+		});
 
-	return lobbyPromise;
-}
-
-export function emitLogin(
-	username: string,
-	cb?: (res: LoginAck) => void,
-): void {
-	currentUsername = username;
-
-	joinLobby()
-		.then((channel) =>
-			channel
-				.push("login", { username })
-				.receive("ok", (payload: unknown) => {
-					const { player, farm } = payload as { player: Player; farm: Farm };
-					cb?.({ ok: true, player, farm });
-				})
-				.receive("error", (payload: unknown) =>
-					cb?.({ ok: false, error: reasonOf(payload) ?? "Login failed" }),
-				)
-				.receive("timeout", () =>
-					cb?.({ ok: false, error: "Login timed out" }),
-				),
-		)
-		.catch((err: Error) => cb?.({ ok: false, error: err.message }));
+	lobby = channel;
+	return channel;
 }
 
 export function requestFarms(): void {
 	joinLobby()
-		.then((channel) =>
-			channel.push("farms", {}).receive("ok", (payload: unknown) => {
-				const { farms } = payload as { farms: FarmSummary[] };
-				useGameStore.getState().setFarms(farms);
-			}),
-		)
-		.catch(() => {});
+		.push("farms", {})
+		.receive("ok", (payload: unknown) => {
+			const { farms } = payload as { farms: FarmSummary[] };
+			useGameStore.getState().setFarms(farms);
+		});
 }
 
 export function emitVisitFarm(
 	owner: string,
 	cb?: (res: FarmAck) => void,
 ): void {
-	// Already visiting this farm: nothing to do.
 	if (farmChannel && farmOwner === owner) {
 		cb?.({ ok: true });
 		return;
 	}
 
-	const channel = socket.channel(`farm:${owner}`, {
-		username: currentUsername,
-	});
+	const channel = socket.channel(`farm:${owner}`, {});
 
 	channel.on("farmUpdate", (payload: unknown) => {
-		const { farm } = payload as { farm: Farm };
+		const { farm } = payload as { farm: ActiveFarm };
 		useGameStore.getState().setActiveFarm(farm);
 	});
 
 	channel
 		.join()
 		.receive("ok", (payload: unknown) => {
-			const { farm } = payload as { farm: Farm };
+			const { farm } = payload as { farm: ActiveFarm };
 			const previous = farmChannel;
 			farmChannel = channel;
 			farmOwner = owner;
 			useGameStore.getState().setActiveFarm(farm);
-			// Leaving the old channel removes us from the old farm's visitors.
+			// Leaving the old channel drops this socket's subscription.
 			if (previous && previous !== channel) previous.leave();
 			cb?.({ ok: true, farm });
 		})
@@ -141,32 +114,24 @@ export function emitVisitFarm(
 		.receive("timeout", () => cb?.({ ok: false, error: "Farm timed out" }));
 }
 
-export function emitLeaveFarm(cb?: (res: FarmAck) => void): void {
+export function emitLeaveFarm(cb?: (res: Ack) => void): void {
 	const channel = farmChannel;
 	if (!channel) {
-		cb?.({ ok: true, removed: false });
+		cb?.({ ok: true });
 		return;
 	}
 
-	channel
-		.push("leaveFarm", {})
-		.receive("ok", (payload: unknown) => {
-			const { removed } = payload as { removed: boolean };
-			channel.leave();
-			farmChannel = null;
-			farmOwner = null;
-			useGameStore.getState().setActiveFarm(null);
-			cb?.({ ok: true, removed });
-		})
-		.receive("error", (payload: unknown) =>
-			cb?.({ ok: false, error: reasonOf(payload) ?? "Could not leave farm" }),
-		);
+	channel.leave();
+	farmChannel = null;
+	farmOwner = null;
+	useGameStore.getState().setActiveFarm(null);
+	cb?.({ ok: true });
 }
 
 export function emitFarmAction(
 	owner: string,
 	action: FarmAction,
-	cb?: (res: FarmAck) => void,
+	cb?: (res: Ack) => void,
 ): void {
 	const channel = farmChannel;
 	if (!channel || farmOwner !== owner) {
@@ -175,29 +140,30 @@ export function emitFarmAction(
 	}
 
 	channel
-		.push("farmAction", { owner, action })
+		.push("farmAction", { action })
 		.receive("ok", () => cb?.({ ok: true }))
 		.receive("error", (payload: unknown) =>
 			cb?.({ ok: false, error: reasonOf(payload) ?? "Invalid action" }),
-		);
+		)
+		.receive("timeout", () => cb?.({ ok: false, error: "Timed out" }));
 }
 
-/** Registers global handlers and restores a saved session, if any. */
+/** Registers global handlers and opens the lobby channel. */
 export function initSocket(): void {
 	socket.connect();
-
 	socket.onOpen(() => {
-		const reconnecting = connected;
-		connected = true;
-		joinLobby().catch(() => {});
-		if (reconnecting && currentUsername) emitLogin(currentUsername);
+		joinLobby();
 	});
+	joinLobby();
+}
 
-	const saved = localStorage.getItem("grange.username");
-	if (saved) {
-		currentUsername = saved;
-		emitLogin(saved);
-	} else {
-		joinLobby().catch(() => {});
-	}
+/**
+ * Forces a fresh socket so the handshake re-runs with the new session cookie.
+ * The initial connection happens before sign-in, so without this the server
+ * would never learn who the user is.
+ */
+export function rebindAuth(): void {
+	socket.disconnect();
+	socket.connect();
+	joinLobby();
 }

@@ -3,17 +3,19 @@ defmodule GrangeWeb.HealthController do
 
   use Phoenix.Controller, formats: [:json]
 
-  alias Grange.Store
+  alias Grange.Accounts
+  alias Grange.FarmStore
 
   def state(conn, _params) do
     json(conn, %{
-      playerCount: length(Store.players()),
-      farmCount: length(Store.summaries())
+      playerCount: length(Accounts.list_users()),
+      farmCount: length(FarmStore.summaries())
     })
   end
 
   def reset(conn, _params) do
-    Store.reset()
+    Accounts.reset()
+    FarmStore.reset()
     json(conn, %{ok: true})
   end
 end

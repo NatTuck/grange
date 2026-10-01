@@ -5,10 +5,16 @@ defmodule GrangeWeb.Router do
 
   pipeline :api do
     plug(:accepts, ["json"])
+    plug(:fetch_session)
   end
 
   scope "/api", GrangeWeb do
     pipe_through(:api)
+
+    post("/auth/register", AuthController, :register)
+    post("/auth/login", AuthController, :login)
+    post("/auth/logout", AuthController, :logout)
+    get("/auth/me", AuthController, :me)
 
     get("/state", HealthController, :state)
 

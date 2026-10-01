@@ -47,6 +47,7 @@ defmodule Grange.MixProject do
       {:phoenix_pubsub, "~> 2.1"},
       {:jason, "~> 1.4"},
       {:bandit, "~> 1.5"},
+      {:argon2_elixir, "~> 4.0"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
     ]
   end

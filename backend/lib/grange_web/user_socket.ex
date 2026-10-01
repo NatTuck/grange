@@ -3,12 +3,33 @@ defmodule GrangeWeb.UserSocket do
 
   use Phoenix.Socket
 
+  alias Grange.Accounts
+
   channel("lobby", GrangeWeb.LobbyChannel)
   channel("farm:*", GrangeWeb.FarmChannel)
 
   @impl true
-  def connect(_params, socket, _connect_info), do: {:ok, socket}
+  def connect(params, socket, _connect_info) do
+    case Accounts.resolve_token(token(params)) do
+      {:ok, user} -> {:ok, assign(socket, :user, user)}
+      :error -> {:ok, socket}
+    end
+  end
 
   @impl true
-  def id(_socket), do: nil
+  def id(socket) do
+    case socket.assigns[:user] do
+      %{id: id} -> id
+      _ -> nil
+    end
+  end
+
+  defp token(params) when is_map(params) do
+    case Map.get(params, "token") do
+      value when is_binary(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp token(_params), do: nil
 end

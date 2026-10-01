@@ -1,43 +1,49 @@
 import { expect, test } from "@playwright/test";
-import { gotoMyFarm, login, resetServer, uniqueName } from "./helpers";
+import { register, resetServer, uniqueName } from "./helpers";
 
-test("acceptance: plant, grow, harvest, convert ends with one tomato and four seeds", async ({
+test("hoeing and planting a tile round-trips through the server", async ({
 	page,
 }) => {
 	await resetServer();
-	await login(page, uniqueName("Farmer"));
-	await gotoMyFarm(page);
+	await register(page, uniqueName("Farmer"));
 
-	const seeds = page.getByTestId("seeds");
-	const tomatoes = page.getByTestId("tomatoes");
+	const canvas = page.locator("canvas[aria-label^='Farm map']");
+	await expect(canvas).toBeVisible();
 
-	// Start with 4 seeds.
-	await expect(seeds).toHaveText("4");
-	await expect(tomatoes).toHaveText("0");
+	const tiles = page.getByTestId("farm-map-tiles");
+	await expect(tiles).toHaveText("0 tiles");
 
-	// Plant two seeds.
-	const plantButton = page.getByRole("button", { name: /Plant Seed/i });
-	await plantButton.click();
-	await plantButton.click();
-	await expect(seeds).toHaveText("2");
-	await expect(page.getByText(/^Seedling$/)).toHaveCount(2);
+	// The player spawns on a field tile, so the selected tool acts immediately.
+	await page.getByTestId("tool-hoe").click();
+	await page.keyboard.press("Space");
+	await expect(tiles).toHaveText("1 tiles");
 
-	// Grow them to tomato plants.
-	const grow = page.getByRole("button", { name: /^Grow$/ });
-	await grow.first().click();
-	await grow.first().click();
-	await expect(page.getByText(/^Tomato plant$/)).toHaveCount(2);
+	await page.getByTestId("tool-seed").click();
+	await page.keyboard.press("Space");
+	await expect(tiles).toHaveText("1 tiles");
+});
 
-	// Harvest them into the barn.
-	const harvest = page.getByRole("button", { name: /^Harvest$/ });
-	await harvest.first().click();
-	await harvest.first().click();
-	await expect(page.getByTestId("field-empty")).toBeVisible();
-	await expect(tomatoes).toHaveText("2");
-	await expect(seeds).toHaveText("2");
+test("the tool bar highlights the selected tool", async ({ page }) => {
+	await resetServer();
+	await register(page, uniqueName("Farmer"));
 
-	// Convert one tomato into two seeds.
-	await page.getByRole("button", { name: /Convert Tomato/i }).click();
-	await expect(tomatoes).toHaveText("1");
-	await expect(seeds).toHaveText("4");
+	await page.getByTestId("tool-bucket").click();
+	await expect(page.getByTestId("tool-bucket")).toHaveClass(/farm-map-tool-active/);
+	await expect(page.getByTestId("tool-hoe")).not.toHaveClass(
+		/farm-map-tool-active/,
+	);
+});
+
+test("a visitor sees another farm read-only", async ({ page }) => {
+	await resetServer();
+	const owner = uniqueName("Owner");
+	await register(page, owner);
+	await page.getByTestId("logout").click();
+	await page.waitForURL("**/");
+
+	await register(page, uniqueName("Visitor"));
+	await page.goto(`/farms/${encodeURIComponent(owner)}`);
+
+	await expect(page.locator("canvas[aria-label^='Farm map']")).toBeVisible();
+	await expect(page.getByTestId("tool-hoe")).toHaveCount(0);
 });

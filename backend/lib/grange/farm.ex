@@ -1,94 +1,89 @@
 defmodule Grange.Farm do
   @moduledoc """
-  A player's farm: a field of plants plus the owner's barn inventory.
+  Pure helpers for a player's field: bounds, crop timing, and tile transitions.
 
-  `seeds` and `tomatoes` are the owner's barn inventory. Farms are conceptually
-  persistent, but only held in memory for now.
+  A field is a `grid_size/0` x `grid_size/0` grid. Only tilled tiles are
+  tracked; any coordinate without a tile is bare ground. Tiles cycle
+  `tilled -> planted -> watered -> ready -> tilled` as the player hoes, plants,
+  waters, and harvests.
   """
 
-  alias Grange.{Id, Plant}
+  @grid_size 15
+  @grow_ms 10_000
+  @harvest_yield 3
 
-  @starting_seeds 4
-  @seeds_per_tomato 2
+  @typedoc "The lifecycle state of a field tile."
+  @type state :: :tilled | :planted | :watered | :ready
 
-  @derive {Jason.Encoder, only: [:owner, :field, :seeds, :tomatoes, :visitors]}
-  defstruct owner: nil, field: [], seeds: @starting_seeds, tomatoes: 0, visitors: []
-
-  @type t :: %__MODULE__{
-          owner: String.t(),
-          field: [Plant.t()],
-          seeds: non_neg_integer(),
-          tomatoes: non_neg_integer(),
-          visitors: [String.t()]
+  @typedoc "One planted or tilled tile of a player's field."
+  @type tile :: %{
+          x: non_neg_integer(),
+          y: non_neg_integer(),
+          state: state(),
+          crop: String.t(),
+          planted_at: integer() | nil,
+          watered_at: integer() | nil,
+          ready_at: integer() | nil
         }
 
-  @doc "A brand new farm: four seeds and an empty field."
-  def create(owner), do: %__MODULE__{owner: owner}
+  @doc "The field is this many tiles on each side."
+  @spec grid_size() :: pos_integer()
+  def grid_size, do: @grid_size
 
-  def starting_seeds, do: @starting_seeds
-  def seeds_per_tomato, do: @seeds_per_tomato
+  @doc "How long a watered tile takes to become ready, in milliseconds."
+  @spec grow_ms() :: pos_integer()
+  def grow_ms, do: @grow_ms
 
-  @doc """
-  Applies one action to a farm. Returns `{:ok, farm}` with the updated farm, or
-  `{:error, reason}` for an illegal action.
-  """
-  @spec apply_action(t(), map()) :: {:ok, t()} | {:error, String.t()}
-  def apply_action(farm, %{"kind" => "plantSeed"}), do: plant_seed(farm)
+  @doc "How many tomatoes a harvest yields."
+  @spec harvest_yield() :: pos_integer()
+  def harvest_yield, do: @harvest_yield
 
-  def apply_action(farm, %{"kind" => "grow", "plantId" => plant_id}),
-    do: grow(farm, plant_id)
+  @doc "True when `{x, y}` is an integer coordinate inside the field."
+  @spec in_bounds?(integer(), integer()) :: boolean()
+  def in_bounds?(x, y), do: in_bounds?(x, y, @grid_size)
 
-  def apply_action(farm, %{"kind" => "harvest", "plantId" => plant_id}),
-    do: harvest(farm, plant_id)
-
-  def apply_action(farm, %{"kind" => "convertTomato"}), do: convert_tomato(farm)
-
-  defp plant_seed(%{seeds: seeds}) when seeds <= 0, do: {:error, "no seeds to plant"}
-
-  defp plant_seed(farm) do
-    plant = %Plant{id: Id.generate(), stage: :seedling}
-    {:ok, %{farm | seeds: farm.seeds - 1, field: farm.field ++ [plant]}}
+  @spec in_bounds?(integer(), integer(), pos_integer()) :: boolean()
+  def in_bounds?(x, y, size) do
+    is_integer(x) and is_integer(y) and x >= 0 and y >= 0 and x < size and y < size
   end
 
-  defp grow(farm, plant_id) do
-    case find_plant(farm, plant_id) do
-      nil ->
-        {:error, "no such plant"}
-
-      %Plant{stage: :seedling} = plant ->
-        {:ok, %{farm | field: replace_plant(farm.field, %{plant | stage: :tomato})}}
-
-      %Plant{} ->
-        {:error, "already grown"}
-    end
+  @doc "A freshly tilled tile."
+  @spec new_tile(integer(), integer()) :: tile()
+  def new_tile(x, y) do
+    %{x: x, y: y, state: :tilled, crop: "tomato"}
+    |> Map.merge(%{planted_at: nil, watered_at: nil, ready_at: nil})
   end
 
-  defp harvest(farm, plant_id) do
-    case find_plant(farm, plant_id) do
-      nil ->
-        {:error, "no such plant"}
+  @doc "Plants a seed in a tilled tile."
+  @spec plant(tile(), integer()) :: {:ok, tile()} | {:error, String.t()}
+  def plant(%{state: :tilled} = tile, now), do: {:ok, %{tile | state: :planted, planted_at: now}}
+  def plant(_tile, _now), do: {:error, "tile is not tilled"}
 
-      %Plant{stage: :tomato} ->
-        field = Enum.reject(farm.field, &(&1.id == plant_id))
-        {:ok, %{farm | field: field, tomatoes: farm.tomatoes + 1}}
-
-      %Plant{} ->
-        {:error, "not ready to harvest"}
-    end
+  @doc "Waters a planted tile, scheduling when it becomes ready."
+  @spec water(tile(), integer()) :: {:ok, tile()} | {:error, String.t()}
+  def water(%{state: :planted} = tile, now) do
+    {:ok, %{tile | state: :watered, watered_at: now, ready_at: now + @grow_ms}}
   end
 
-  defp convert_tomato(%{tomatoes: tomatoes}) when tomatoes <= 0,
-    do: {:error, "no tomatoes to convert"}
+  def water(_tile, _now), do: {:error, "tile is not planted"}
 
-  defp convert_tomato(farm) do
-    {:ok, %{farm | tomatoes: farm.tomatoes - 1, seeds: farm.seeds + @seeds_per_tomato}}
+  @doc "Harvests a ready tile back to tilled ground."
+  @spec harvest(tile()) :: {:ok, tile()} | {:error, String.t()}
+  def harvest(%{state: :ready} = tile) do
+    {:ok, %{tile | state: :tilled, watered_at: nil, ready_at: nil}}
   end
 
-  defp find_plant(farm, plant_id), do: Enum.find(farm.field, &(&1.id == plant_id))
+  def harvest(_tile), do: {:error, "tile is not ready"}
 
-  defp replace_plant(field, updated) do
-    Enum.map(field, fn plant ->
-      if plant.id == updated.id, do: updated, else: plant
-    end)
+  @doc "True when a watered tile's ready time has passed."
+  @spec ready?(tile(), integer()) :: boolean()
+  def ready?(%{state: :watered, ready_at: ready_at}, now) do
+    is_integer(ready_at) and now >= ready_at
   end
+
+  def ready?(_tile, _now), do: false
+
+  @doc "Flips a ripe watered tile to ready."
+  @spec mark_ready(tile()) :: tile()
+  def mark_ready(%{state: :watered} = tile), do: %{tile | state: :ready}
 end

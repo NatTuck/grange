@@ -1,33 +1,41 @@
 defmodule GrangeWeb.LobbyChannel do
   @moduledoc """
-  The lobby: login, plus the player and farm listings.
+  Lists registered players and every farm summary, broadcasting updates.
 
-  Replaces the socket.io `login` / `farms` events and the `players` / `farms`
-  broadcasts.
+  Replaces the socket.io `farms` request and the `players` / `farms` events.
   """
 
   use Phoenix.Channel
 
-  alias Grange.Store
+  alias Grange.Accounts
+  alias Grange.FarmStore
 
   @impl true
-  def join("lobby", _payload, socket), do: {:ok, socket}
+  def join("lobby", _payload, socket) do
+    GrangeWeb.Endpoint.subscribe("lobby")
+    ensure_farm(socket)
+    {:ok, %{players: players(), farms: FarmStore.summaries()}, socket}
+  end
 
   @impl true
-  def handle_in("login", %{"username" => raw}, socket) do
-    name = raw |> to_string() |> String.trim()
+  def handle_in("farms", _payload, socket) do
+    {:reply, {:ok, %{farms: FarmStore.summaries()}}, socket}
+  end
 
-    if name == "" do
-      {:reply, {:error, %{error: "username is required"}}, socket}
-    else
-      {player, farm} = Store.get_or_create_player(name)
-      broadcast!(socket, "players", %{players: Store.players()})
-      broadcast!(socket, "farms", %{farms: Store.summaries()})
-      {:reply, {:ok, %{player: player, farm: farm}}, assign(socket, :username, name)}
+  @impl true
+  def handle_out(event, payload, socket) do
+    push(socket, event, payload)
+    {:noreply, socket}
+  end
+
+  defp ensure_farm(socket) do
+    case socket.assigns[:user] do
+      %{username: username} -> FarmStore.ensure(username)
+      _ -> nil
     end
   end
 
-  def handle_in("farms", _payload, socket) do
-    {:reply, {:ok, %{farms: Store.summaries()}}, socket}
+  defp players do
+    Accounts.list_users() |> Enum.map(&%{name: &1.username})
   end
 end

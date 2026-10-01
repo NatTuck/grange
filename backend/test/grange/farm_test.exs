@@ -1,127 +1,71 @@
 defmodule Grange.FarmTest do
+  @moduledoc false
   use ExUnit.Case, async: true
 
-  alias Grange.{Farm, Plant}
+  alias Grange.Farm
 
-  defp plant(farm, count) do
-    Enum.reduce(1..count, farm, fn _, acc ->
-      assert {:ok, updated} = Farm.apply_action(acc, %{"kind" => "plantSeed"})
-      updated
-    end)
+  test "in_bounds?/2 accepts only integer coordinates inside the grid" do
+    size = Farm.grid_size()
+    assert Farm.in_bounds?(0, 0)
+    assert Farm.in_bounds?(size - 1, size - 1)
+    refute Farm.in_bounds?(-1, 0)
+    refute Farm.in_bounds?(size, 0)
+    refute Farm.in_bounds?(1.5, 2)
+    refute Farm.in_bounds?("1", 2)
   end
 
-  test "create/1 starts with 4 seeds, no tomatoes, and an empty field" do
-    farm = Farm.create("Alice")
+  test "new_tile/2 starts tilled with a tomato crop" do
+    tile = Farm.new_tile(2, 3)
 
-    assert farm.owner == "Alice"
-    assert farm.field == []
-    assert farm.seeds == 4
-    assert farm.tomatoes == 0
-    assert farm.visitors == []
+    assert tile.x == 2
+    assert tile.y == 3
+    assert tile.state == :tilled
+    assert tile.crop == "tomato"
+    assert tile.planted_at == nil
+    assert tile.ready_at == nil
   end
 
-  test "plantSeed moves a seed into the field as a seedling" do
-    farm = Farm.create("Alice")
+  test "plant/2 only accepts a tilled tile" do
+    assert {:ok, planted} = Farm.plant(Farm.new_tile(1, 1), 100)
+    assert planted.state == :planted
+    assert planted.planted_at == 100
 
-    assert {:ok, farm} = Farm.apply_action(farm, %{"kind" => "plantSeed"})
-    assert farm.seeds == 3
-    assert [%Plant{stage: :seedling}] = farm.field
+    assert {:error, "tile is not tilled"} = Farm.plant(planted, 200)
   end
 
-  test "plantSeed rejects planting with no seeds" do
-    farm = plant(Farm.create("Alice"), 4)
+  test "water/2 schedules readiness once, from a planted tile" do
+    {:ok, planted} = Farm.plant(Farm.new_tile(1, 1), 100)
+    assert {:ok, watered} = Farm.water(planted, 200)
 
-    assert {:error, "no seeds to plant"} =
-             Farm.apply_action(farm, %{"kind" => "plantSeed"})
+    assert watered.state == :watered
+    assert watered.watered_at == 200
+    assert watered.ready_at == 200 + Farm.grow_ms()
 
-    assert length(farm.field) == 4
+    assert {:error, "tile is not planted"} = Farm.water(watered, 300)
   end
 
-  test "grow turns a seedling into a tomato plant" do
-    farm = plant(Farm.create("Alice"), 1)
-    [plant] = farm.field
+  test "ready?/2 and mark_ready/1 move a watered tile to ready" do
+    {:ok, planted} = Farm.plant(Farm.new_tile(0, 0), 0)
+    {:ok, watered} = Farm.water(planted, 0)
+    ready_at = watered.ready_at
 
-    assert {:ok, farm} =
-             Farm.apply_action(farm, %{"kind" => "grow", "plantId" => plant.id})
+    refute Farm.ready?(watered, ready_at - 1)
+    assert Farm.ready?(watered, ready_at)
 
-    assert [%Plant{stage: :tomato}] = farm.field
+    assert %{state: :ready} = Farm.mark_ready(watered)
+    refute Farm.ready?(Farm.new_tile(0, 0), 10_000)
   end
 
-  test "grow rejects an unknown plant and a plant that is already grown" do
-    farm = plant(Farm.create("Alice"), 1)
-    [plant] = farm.field
+  test "harvest/1 returns a ready tile to freshly tilled ground" do
+    {:ok, planted} = Farm.plant(Farm.new_tile(4, 4), 0)
+    {:ok, watered} = Farm.water(planted, 0)
+    ready = Farm.mark_ready(watered)
 
-    assert {:error, "no such plant"} =
-             Farm.apply_action(farm, %{"kind" => "grow", "plantId" => "nope"})
+    assert {:ok, tilled} = Farm.harvest(ready)
+    assert tilled.state == :tilled
+    assert tilled.watered_at == nil
+    assert tilled.ready_at == nil
 
-    assert {:ok, grown} =
-             Farm.apply_action(farm, %{"kind" => "grow", "plantId" => plant.id})
-
-    assert {:error, "already grown"} =
-             Farm.apply_action(grown, %{"kind" => "grow", "plantId" => plant.id})
-  end
-
-  test "harvest removes a tomato plant and adds a tomato to the barn" do
-    farm = plant(Farm.create("Alice"), 1)
-    [plant] = farm.field
-    assert {:ok, farm} = Farm.apply_action(farm, %{"kind" => "grow", "plantId" => plant.id})
-
-    assert {:ok, farm} =
-             Farm.apply_action(farm, %{"kind" => "harvest", "plantId" => plant.id})
-
-    assert farm.field == []
-    assert farm.tomatoes == 1
-  end
-
-  test "harvest rejects a seedling" do
-    farm = plant(Farm.create("Alice"), 1)
-    [plant] = farm.field
-
-    assert {:error, "not ready to harvest"} =
-             Farm.apply_action(farm, %{"kind" => "harvest", "plantId" => plant.id})
-  end
-
-  test "convertTomato turns one tomato into two seeds" do
-    farm = %{Farm.create("Alice") | tomatoes: 1}
-
-    assert {:ok, farm} = Farm.apply_action(farm, %{"kind" => "convertTomato"})
-    assert farm.tomatoes == 0
-    assert farm.seeds == 6
-  end
-
-  test "convertTomato rejects converting with no tomatoes" do
-    assert {:error, "no tomatoes to convert"} =
-             Farm.apply_action(Farm.create("Alice"), %{"kind" => "convertTomato"})
-  end
-
-  test "acceptance: ends with one tomato and four seeds" do
-    farm = plant(Farm.create("Alice"), 2)
-    assert farm.seeds == 2
-    assert length(farm.field) == 2
-
-    farm =
-      Enum.reduce(farm.field, farm, fn plant, acc ->
-        {:ok, updated} =
-          Farm.apply_action(acc, %{"kind" => "grow", "plantId" => plant.id})
-
-        updated
-      end)
-
-    assert Enum.all?(farm.field, &(&1.stage == :tomato))
-
-    farm =
-      Enum.reduce(Enum.map(farm.field, & &1.id), farm, fn id, acc ->
-        {:ok, updated} =
-          Farm.apply_action(acc, %{"kind" => "harvest", "plantId" => id})
-
-        updated
-      end)
-
-    assert farm.tomatoes == 2
-    assert farm.seeds == 2
-
-    assert {:ok, farm} = Farm.apply_action(farm, %{"kind" => "convertTomato"})
-    assert farm.tomatoes == 1
-    assert farm.seeds == 4
+    assert {:error, "tile is not ready"} = Farm.harvest(tilled)
   end
 end

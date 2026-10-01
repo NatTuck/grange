@@ -7,7 +7,9 @@ defmodule Grange.Application do
   def start(_type, _args) do
     children = [
       {Phoenix.PubSub, name: Grange.PubSub},
-      Grange.Store,
+      Grange.Accounts,
+      Grange.FarmStore,
+      Grange.FarmTicker,
       GrangeWeb.Endpoint
     ]
 

@@ -12,21 +12,36 @@ export async function resetServer(): Promise<void> {
 	await fetch(`${BASE}/api/reset`, { method: "POST" });
 }
 
-export async function login(page: Page, name: string): Promise<void> {
+/**
+ * Registers a fresh account through the UI and returns the user. `/api/reset`
+ * wipes accounts too, so the username only has to be unique within a test.
+ */
+export async function register(
+	page: Page,
+	username: string,
+	password = "harvest-please",
+): Promise<string> {
 	await page.goto(BASE);
-	await page.locator("input").fill(name);
-	await page.getByRole("button", { name: /^Enter$/i }).click();
-	await page.waitForURL("**/dashboard");
+	await page.getByTestId("toggle-mode").click();
+	await page.getByTestId("username").fill(username);
+	await page.getByTestId("email").fill(`${username}@example.test`);
+	await page.getByTestId("password").fill(password);
+	await page.getByRole("button", { name: /Create Account/i }).click();
+	await page.waitForURL("**/world");
+	return username;
 }
 
-/** Navigates from the lobby to the logged-in user's own field. */
-export async function gotoMyFarm(page: Page): Promise<void> {
-	await page.getByRole("button", { name: /Go to field/i }).click();
-	await page.waitForURL(/\/farms\/.+/);
-}
-
-/** Visits another player's farm (read-only). */
-export async function visitFarm(page: Page, owner: string): Promise<void> {
-	await page.goto(`${BASE}/farms/${encodeURIComponent(owner)}`);
-	await page.getByText(/FIELD/).waitFor();
+/** Registers an account then signs in, leaving the page on the farm map. */
+export async function login(
+	page: Page,
+	username: string,
+	password = "harvest-please",
+): Promise<void> {
+	await register(page, username, password);
+	await page.getByTestId("logout").click();
+	await page.waitForURL(`${BASE}/`);
+	await page.getByTestId("username").fill(username);
+	await page.getByTestId("password").fill(password);
+	await page.getByRole("button", { name: /Sign In/i }).click();
+	await page.waitForURL("**/world");
 }
