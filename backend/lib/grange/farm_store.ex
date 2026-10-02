@@ -46,7 +46,7 @@ defmodule Grange.FarmStore do
       {:reply, view_of(state, owner), state}
     else
       state = put_farm(state, owner, %{tiles: %{}, tomatoes: 0})
-      broadcast(owner, state)
+      broadcast_change(owner, state)
       {:reply, view_of(state, owner), state}
     end
   end
@@ -72,7 +72,8 @@ defmodule Grange.FarmStore do
 
   def handle_call({:tick, now}, _from, state) do
     {state, owners} = mark_ready(state, now)
-    Enum.each(owners, &broadcast(&1, state))
+    Enum.each(owners, &broadcast_farm(&1, state))
+    if owners != [], do: broadcast_lobby(state)
     {:reply, owners, state}
   end
 
@@ -100,7 +101,7 @@ defmodule Grange.FarmStore do
       nil ->
         tile = Farm.new_tile(x, y)
         state = put_tile(state, owner, tile)
-        broadcast(owner, state)
+        broadcast_change(owner, state)
         {:reply, {:ok, view_of(state, owner)}, state}
 
       _tile ->
@@ -124,7 +125,7 @@ defmodule Grange.FarmStore do
           |> put_tile(owner, tilled)
           |> add_tomatoes(owner, Farm.harvest_yield())
 
-        broadcast(owner, state)
+        broadcast_change(owner, state)
         {:reply, {:ok, view_of(state, owner)}, state}
 
       {:error, reason} ->
@@ -134,7 +135,7 @@ defmodule Grange.FarmStore do
 
   defp settle(state, owner, {:ok, tile}) do
     state = put_tile(state, owner, tile)
-    broadcast(owner, state)
+    broadcast_change(owner, state)
     {:reply, {:ok, view_of(state, owner)}, state}
   end
 
@@ -237,11 +238,18 @@ defmodule Grange.FarmStore do
     }
   end
 
-  defp broadcast(owner, state) do
+  defp broadcast_change(owner, state) do
+    broadcast_farm(owner, state)
+    broadcast_lobby(state)
+  end
+
+  defp broadcast_farm(owner, state) do
     GrangeWeb.Endpoint.broadcast("farm:" <> owner, "farmUpdate", %{
       farm: view_of(state, owner)
     })
+  end
 
+  defp broadcast_lobby(state) do
     GrangeWeb.Endpoint.broadcast(@lobby_topic, "farms", %{
       farms: summaries_of(state)
     })

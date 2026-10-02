@@ -94,4 +94,21 @@ defmodule Grange.FarmStoreTest do
 
     assert [%{owner: "Alice", tiles: 1, planted: 1, tomatoes: 0}] = FarmStore.summaries()
   end
+
+  test "tick broadcasts a single lobby summary no matter how many farms change" do
+    for owner <- ["Alice", "Bob", "Carol"] do
+      FarmStore.ensure(owner)
+      FarmStore.action(owner, %{"kind" => "till", "x" => 0, "y" => 0})
+      FarmStore.action(owner, %{"kind" => "plant", "x" => 0, "y" => 0})
+      FarmStore.action(owner, %{"kind" => "water", "x" => 0, "y" => 0})
+    end
+
+    GrangeWeb.Endpoint.subscribe("lobby")
+
+    future = System.monotonic_time(:millisecond) + Farm.grow_ms() + 60_000
+    assert Enum.sort(FarmStore.tick(future)) == ["Alice", "Bob", "Carol"]
+
+    assert_receive %Phoenix.Socket.Broadcast{event: "farms"}
+    refute_receive %Phoenix.Socket.Broadcast{event: "farms"}, 50
+  end
 end
