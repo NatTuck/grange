@@ -71,13 +71,40 @@ defmodule Grange.FarmStoreTest do
     FarmStore.action("Alice", %{"kind" => "plant", "x" => 5, "y" => 5})
     FarmStore.action("Alice", %{"kind" => "water", "x" => 5, "y" => 5})
 
-    future = System.monotonic_time(:millisecond) + Farm.grow_ms() + 60_000
+    future = System.system_time(:millisecond) + Farm.grow_ms() + 60_000
     assert ["Alice"] = FarmStore.tick(future)
     assert %{state: :ready} = tile_at("Alice", 5, 5)
 
     assert {:ok, view} = FarmStore.action("Alice", %{"kind" => "harvest", "x" => 5, "y" => 5})
     assert view.tomatoes == Farm.harvest_yield()
     assert %{state: :tilled} = tile_at("Alice", 5, 5)
+  end
+
+  test "selling tomatoes removes them from the barn" do
+    FarmStore.ensure("Alice")
+    FarmStore.action("Alice", %{"kind" => "till", "x" => 0, "y" => 0})
+    FarmStore.action("Alice", %{"kind" => "plant", "x" => 0, "y" => 0})
+    FarmStore.action("Alice", %{"kind" => "water", "x" => 0, "y" => 0})
+
+    future = System.system_time(:millisecond) + Farm.grow_ms() + 60_000
+    FarmStore.tick(future)
+    FarmStore.action("Alice", %{"kind" => "harvest", "x" => 0, "y" => 0})
+
+    assert {:ok, view} = FarmStore.sell_tomatoes("Alice", 2)
+    assert view.tomatoes == Farm.harvest_yield() - 2
+  end
+
+  test "selling more tomatoes than the barn holds is rejected" do
+    FarmStore.ensure("Alice")
+
+    assert {:error, "not enough tomatoes"} = FarmStore.sell_tomatoes("Alice", 1)
+  end
+
+  test "selling a non-positive amount is rejected" do
+    FarmStore.ensure("Alice")
+
+    assert {:error, "invalid count"} = FarmStore.sell_tomatoes("Alice", 0)
+    assert {:error, "invalid count"} = FarmStore.sell_tomatoes("Alice", -2)
   end
 
   test "actions outside the grid are rejected" do
@@ -105,7 +132,7 @@ defmodule Grange.FarmStoreTest do
 
     GrangeWeb.Endpoint.subscribe("lobby")
 
-    future = System.monotonic_time(:millisecond) + Farm.grow_ms() + 60_000
+    future = System.system_time(:millisecond) + Farm.grow_ms() + 60_000
     assert Enum.sort(FarmStore.tick(future)) == ["Alice", "Bob", "Carol"]
 
     assert_receive %Phoenix.Socket.Broadcast{event: "farms"}
