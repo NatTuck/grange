@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+	ANIMATED_PROPS,
 	FARM_TRAIN_ENGINE_STOP,
 	FARM_TRAIN_STOP,
 	isNearFarmTrain,
@@ -50,14 +51,12 @@ describe("farm map data", () => {
 		for (const asset of assets) {
 			expect(propBlocking[asset]).toBeDefined();
 		}
-		expect(propBlocking["fence-horizontal"]).toBe("rect");
-		expect(propBlocking["fence-post"]).toBe("rect");
 		expect(propBlocking.farmhouse).toBe("rect");
 		expect(propBlocking.well).toBe("rect");
 		expect(propBlocking["oak-tree"]).toBe("base");
-		expect(propBlocking.daisies).toBe("none");
-		expect(propBlocking.marigolds).toBe("none");
-		expect(propBlocking["blue-flowers"]).toBe("none");
+		expect(propBlocking.daisies).toBe("base");
+		expect(propBlocking.marigolds).toBe("base");
+		expect(propBlocking["blue-flowers"]).toBe("base");
 	});
 
 	it("creates the main path intersection", () => {
@@ -91,5 +90,13 @@ describe("farm map data", () => {
 		expect(isNearFarmTrain(1050, 530)).toBe(true);
 		expect(isNearFarmTrain(1130, 530)).toBe(true);
 		expect(isNearFarmTrain(1060, 450)).toBe(false);
+	});
+
+	it("marks the train as scene-animated so static renderers skip it", () => {
+		expect(ANIMATED_PROPS.has("starter-train")).toBe(true);
+		for (const prop of props) {
+			if (prop.asset === "starter-train") continue;
+			expect(ANIMATED_PROPS.has(prop.asset)).toBe(false);
+		}
 	});
 });

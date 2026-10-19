@@ -4,17 +4,26 @@ import {
 	CASINO_PLAYER_SPAWN,
 	CASINO_ROULETTE_TABLE,
 } from "./casinoData";
-import { FARM_PLAYER_SPAWN, FARM_TRAIN_STOP } from "./mapData";
+import {
+	FARM_PLAYER_SPAWN,
+	FARM_TRAIN_ARRIVAL_SPAWN,
+	FARM_TRAIN_STOP,
+	isNearFarmTrain,
+	props,
+} from "./mapData";
+import { placedFarmProps } from "./farmPropData";
 import {
 	MARKETPLACE_CASINO_ENTRANCE,
 	MARKETPLACE_PLAYER_SPAWN,
 	MARKETPLACE_PRODUCE_MARKET_ENTRANCE,
+	MARKETPLACE_SEED_MARKET_ENTRANCE,
 	MARKETPLACE_TRAIN_STOP,
 } from "./marketplaceData";
 import {
 	casinoWalkObstacles,
 	farmWalkObstacles,
 	marketplaceWalkObstacles,
+	setFarmPropObstacles,
 } from "./sceneObstacles";
 import { moveAroundObstacles, type WalkObstacle } from "./walkCollisions";
 
@@ -66,9 +75,29 @@ describe("walking collisions", () => {
 		});
 	});
 
+	it("updates walking collision when the well is carried and placed elsewhere", () => {
+		const atWell = (box: WalkObstacle) => box.left <= 200 && box.right >= 200 &&
+			box.top <= 370 && box.bottom >= 370;
+		expect(farmWalkObstacles.some(atWell)).toBe(true);
+		try {
+			setFarmPropObstacles(placedFarmProps([
+				{ index: 2, asset: "well", x: 0, y: 0, carried: true },
+			]));
+			expect(farmWalkObstacles.some(atWell)).toBe(false);
+			setFarmPropObstacles(placedFarmProps([
+				{ index: 2, asset: "well", x: 480, y: 416, carried: false },
+			]));
+			expect(farmWalkObstacles.some((box) => box.left <= 480 && box.right >= 480 &&
+				box.top <= 390 && box.bottom >= 390)).toBe(true);
+		} finally {
+			setFarmPropObstacles(props);
+		}
+	});
+
 	it("leaves scene spawns clear and train prompts reachable", () => {
 		for (const [point, obstacles] of [
 			[FARM_PLAYER_SPAWN, farmWalkObstacles],
+			[FARM_TRAIN_ARRIVAL_SPAWN, farmWalkObstacles],
 			[MARKETPLACE_PLAYER_SPAWN, marketplaceWalkObstacles],
 			[CASINO_PLAYER_SPAWN, casinoWalkObstacles],
 		] as const) {
@@ -82,6 +111,9 @@ describe("walking collisions", () => {
 				FARM_PLAYER_SPAWN.y - FARM_TRAIN_STOP.y,
 			),
 		).toBeLessThan(115);
+		expect(
+			isNearFarmTrain(FARM_TRAIN_ARRIVAL_SPAWN.x, FARM_TRAIN_ARRIVAL_SPAWN.y),
+		).toBe(true);
 		expect(
 			Math.hypot(
 				MARKETPLACE_PLAYER_SPAWN.x - MARKETPLACE_TRAIN_STOP.x,
@@ -125,10 +157,7 @@ describe("walking collisions", () => {
 
 		const marketplace = walk(
 			MARKETPLACE_PLAYER_SPAWN,
-			[
-				{ x: Math.SQRT1_2, y: -Math.SQRT1_2, seconds: 2.9 },
-				{ x: 1, y: 0, seconds: 1.2 },
-			],
+			[{ x: 0, y: -1, seconds: 1.5 }],
 			marketplaceWalkObstacles,
 		);
 		expect(
@@ -167,8 +196,8 @@ describe("walking collisions", () => {
 		const produce = walk(
 			MARKETPLACE_PLAYER_SPAWN,
 			[
-				{ x: 0, y: -1, seconds: 2 },
-				{ x: 1, y: 0, seconds: 1 },
+				{ x: -1, y: 0, seconds: 0.5 },
+				{ x: -Math.SQRT1_2, y: -Math.SQRT1_2, seconds: 2.5 },
 			],
 			marketplaceWalkObstacles,
 		);
@@ -176,6 +205,25 @@ describe("walking collisions", () => {
 			Math.hypot(
 				produce.x - MARKETPLACE_PRODUCE_MARKET_ENTRANCE.x,
 				produce.y - MARKETPLACE_PRODUCE_MARKET_ENTRANCE.y,
+			),
+		).toBeLessThan(95);
+	});
+
+	it("keeps the seed market reachable from the new train-side spawn", () => {
+		// Mirrors e2e/helpers walkToSeedMarket: north into the clear lane
+		// between the shop fronts and the stall tops, then straight west.
+		const seed = walk(
+			MARKETPLACE_PLAYER_SPAWN,
+			[
+				{ x: 0, y: -1, seconds: 1.3 },
+				{ x: -1, y: 0, seconds: 4.5 },
+			],
+			marketplaceWalkObstacles,
+		);
+		expect(
+			Math.hypot(
+				seed.x - MARKETPLACE_SEED_MARKET_ENTRANCE.x,
+				seed.y - MARKETPLACE_SEED_MARKET_ENTRANCE.y,
 			),
 		).toBeLessThan(95);
 	});
